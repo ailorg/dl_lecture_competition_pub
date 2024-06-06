@@ -1,0 +1,17 @@
+dataset_path: data
+seed: 42
+num_epoch: 100
+data_loader:
+  common:
+    num_voxel_bins: 15
+  train:
+    batch_size: 16
+    shuffle: false
+  test:
+    batch_size: 1
+    shuffle: false
+train:
+  no_batch_norm: false
+  initial_learning_rate: 0.01
+  weight_decay: 0.0001
+  epochs: 10
