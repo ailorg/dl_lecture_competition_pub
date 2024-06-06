@@ -9,7 +9,7 @@
   - 出力: 1854クラスのラベル．
   - 評価指標: top-10 accuracy（モデルの予測確率トップ10に正解クラスが含まれているかどうか）．
 - Visual Question Answering（VQA）（[`VQA-competition`](https://github.com/ailorg/dl_lecture_competition_pub/tree/VQA-competition)ブランチ）: 画像と質問から，回答を予測する．
-  - サンプル数: 訓練19.873サンプル，テスト4,969サンプル．
+  - サンプル数: 訓練19,873サンプル，テスト4,969サンプル．
   - 入力: 画像データ（RGB，サイズは画像によって異なる），質問文（サンプルごとに長さは異なる）．
   - 出力: 回答文（サンプルごとに長さは異なる）．
   - 評価指標: VQAでの評価指標（[こちら](https://visualqa.org/evaluation.html)を参照）を利用．
@@ -44,7 +44,7 @@ $ git clone git@github.com:[Github user name]/dl_lecture_competition_pub
 - [Competition name]には`MEG-competition`（脳波分類タスク），`VQA-competition`（VQAタスク），`event-camera-competition`（EventCameraタスク）のいずれかが入ります．
 ```bash
 $ cd dl_lecture_competition_pub
-$ git checkout [Competition name]/main
+$ git checkout [Competition name]
 ```
 4. README.mdの`環境構築`を参考に環境を作成します．
 - README.mdにはconda，もしくはDockerを利用した環境構築の手順を記載しています．
