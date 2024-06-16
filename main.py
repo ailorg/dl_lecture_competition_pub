@@ -337,7 +337,7 @@ def train(model, dataloader, optimizer, criterion, device):
 
     return total_loss / len(dataloader), total_acc / len(dataloader), simple_acc / len(dataloader), time.time() - start
 
-# 改善５早期停止
+# 改善ボツ早期停止
 class EarlyStopping:
     def __init__(self, patience=5, min_delta=0):
         self.patience = patience
@@ -417,7 +417,7 @@ def main():
     # optimizer / criterion
     # 改善２学習スケジューラー
     # num_epoch = 10
-    num_epoch = 1
+    num_epoch = 6
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
     scheduler = StepLR(optimizer, step_size=5, gamma=0.1)  # 5エポックごとに学習率を0.1倍
