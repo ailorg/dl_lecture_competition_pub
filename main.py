@@ -11,6 +11,9 @@ import torch.nn as nn
 import torchvision
 from torchvision import transforms
 
+# 学習スケジューラー
+from torch.optim.lr_scheduler import StepLR
+
 
 def set_seed(seed):
     random.seed(seed)
@@ -85,14 +88,13 @@ class VQADataset(torch.utils.data.Dataset):
         self.idx2question = {v: k for k, v in self.question2idx.items()}  # 逆変換用の辞書(question)
 
         if self.answer:
-            # 回答に含まれる単語を辞書に追加
+        # 回答に含まれる単語を辞書に追加
             for answers in self.df["answers"]:
                 for answer in answers:
-                    word = answer["answer"]
-                    word = process_text(word)
+                    word = process_text(answer["answer"])
                     if word not in self.answer2idx:
                         self.answer2idx[word] = len(self.answer2idx)
-            self.idx2answer = {v: k for k, v in self.answer2idx.items()}  # 逆変換用の辞書(answer)
+        self.idx2answer = {v: k for k, v in self.answer2idx.items()}  # 逆変換用の辞書(answer)
 
     def update_dict(self, dataset):
         """
@@ -130,22 +132,22 @@ class VQADataset(torch.utils.data.Dataset):
         """
         image = Image.open(f"{self.image_dir}/{self.df['image'][idx]}")
         image = self.transform(image)
-        question = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
-        question_words = self.df["question"][idx].split(" ")
-        for word in question_words:
+        # 改良５質問文の前処理
+        question = process_text(self.df["question"][idx])
+        question_tokens = question.split(" ")
+        question_vec = np.zeros(len(self.idx2question) + 1)  # 未知語用の要素を追加
+        for word in question_tokens:
             try:
-                question[self.question2idx[word]] = 1  # one-hot表現に変換
+                question_vec[self.question2idx[word]] = 1  # one-hot表現に変換
             except KeyError:
-                question[-1] = 1  # 未知語
-
+                question_vec[-1] = 1  # 未知語
         if self.answer:
-            answers = [self.answer2idx[process_text(answer["answer"])] for answer in self.df["answers"][idx]]
-            mode_answer_idx = mode(answers)  # 最頻値を取得（正解ラベル）
+           answers = [self.answer2idx[process_text(answer["answer"])] for answer in self.df["answers"][idx]]
+           mode_answer_idx = mode(answers)  # 最頻値を取得（正解ラベル）
 
-            return image, torch.Tensor(question), torch.Tensor(answers), int(mode_answer_idx)
-
+           return image, torch.Tensor(question_vec), torch.Tensor(answers), int(mode_answer_idx)
         else:
-            return image, torch.Tensor(question)
+            return image, torch.Tensor(question_vec)
 
     def __len__(self):
         return len(self.df)
@@ -286,7 +288,7 @@ def ResNet18():
 def ResNet50():
     return ResNet(BottleneckBlock, [3, 4, 6, 3])
 
-
+# 改善３dropout追加
 class VQAModel(nn.Module):
     def __init__(self, vocab_size: int, n_answer: int):
         super().__init__()
@@ -296,6 +298,7 @@ class VQAModel(nn.Module):
         self.fc = nn.Sequential(
             nn.Linear(1024, 512),
             nn.ReLU(inplace=True),
+            nn.Dropout(0.5),  # Dropoutを追加
             nn.Linear(512, n_answer)
         )
 
@@ -308,7 +311,6 @@ class VQAModel(nn.Module):
 
         return x
 
-
 # 4. 学習の実装
 def train(model, dataloader, optimizer, criterion, device):
     model.train()
@@ -319,7 +321,7 @@ def train(model, dataloader, optimizer, criterion, device):
 
     start = time.time()
     for image, question, answers, mode_answer in dataloader:
-        image, question, answer, mode_answer = \
+        image, question, answers, mode_answer = \
             image.to(device), question.to(device), answers.to(device), mode_answer.to(device)
 
         pred = model(image, question)
@@ -335,8 +337,29 @@ def train(model, dataloader, optimizer, criterion, device):
 
     return total_loss / len(dataloader), total_acc / len(dataloader), simple_acc / len(dataloader), time.time() - start
 
+# 改善ボツ早期停止
+class EarlyStopping:
+    def __init__(self, patience=5, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.best_loss = None
+        self.counter = 0
+        self.early_stop = False
 
-def eval(model, dataloader, optimizer, criterion, device):
+    def __call__(self, val_loss):
+        if self.best_loss is None:
+            self.best_loss = val_loss
+        elif val_loss > self.best_loss - self.min_delta:
+            self.counter += 1
+            if self.counter >= self.patience:
+                self.early_stop = True
+        else:
+            self.best_loss = val_loss
+            self.counter = 0
+
+early_stopping = EarlyStopping(patience=3, min_delta=0.01)
+
+def eval(model, dataloader, criterion, device):
     model.eval()
 
     total_loss = 0
@@ -344,16 +367,23 @@ def eval(model, dataloader, optimizer, criterion, device):
     simple_acc = 0
 
     start = time.time()
-    for image, question, answers, mode_answer in dataloader:
-        image, question, answer, mode_answer = \
-            image.to(device), question.to(device), answers.to(device), mode_answer.to(device)
+    with torch.no_grad():
+        for batch in dataloader:
+            if len(batch) == 4:
+                image, question, answers, mode_answer = batch
+                image, question, answers, mode_answer = \
+                    image.to(device), question.to(device), answers.to(device), mode_answer.to(device)
 
-        pred = model(image, question)
-        loss = criterion(pred, mode_answer.squeeze())
+                pred = model(image, question)
+                loss = criterion(pred, mode_answer.squeeze())
 
-        total_loss += loss.item()
-        total_acc += VQA_criterion(pred.argmax(1), answers)  # VQA accuracy
-        simple_acc += (pred.argmax(1) == mode_answer).mean().item()  # simple accuracy
+                total_loss += loss.item()
+                total_acc += VQA_criterion(pred.argmax(1), answers)  # VQA accuracy
+                simple_acc += (pred.argmax(1) == mode_answer).mean().item()  # simple accuracy
+            else:
+                image, question = batch
+                image, question = image.to(device), question.to(device)
+                pred = model(image, question)
 
     return total_loss / len(dataloader), total_acc / len(dataloader), simple_acc / len(dataloader), time.time() - start
 
@@ -364,23 +394,33 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # dataloader / model
+    # 改善１データ拡張
     transform = transforms.Compose([
         transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(10),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.2),
         transforms.ToTensor()
     ])
-    train_dataset = VQADataset(df_path="./data/train.json", image_dir="./data/train", transform=transform)
-    test_dataset = VQADataset(df_path="./data/valid.json", image_dir="./data/valid", transform=transform, answer=False)
+
+    train_dataset = VQADataset(df_path="/content/dl_lecture_competition_pub/data/train.json", image_dir="/content/data/train", transform=transform)
+    test_dataset = VQADataset(df_path="/content/dl_lecture_competition_pub/data/valid.json", image_dir="/content/data/valid", transform=transform, answer=False)
+
     test_dataset.update_dict(train_dataset)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=128, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1, shuffle=False)
+    # 改善４バッチサイズを小さく
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=64, shuffle=True)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False)
 
     model = VQAModel(vocab_size=len(train_dataset.question2idx)+1, n_answer=len(train_dataset.answer2idx)).to(device)
 
     # optimizer / criterion
-    num_epoch = 20
+    # 改善２学習スケジューラー
+    # num_epoch = 10
+    num_epoch = 6
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+    scheduler = StepLR(optimizer, step_size=5, gamma=0.1)  # 5エポックごとに学習率を0.1倍
 
     # train model
     for epoch in range(num_epoch):
@@ -390,15 +430,25 @@ def main():
               f"train loss: {train_loss:.4f}\n"
               f"train acc: {train_acc:.4f}\n"
               f"train simple acc: {train_simple_acc:.4f}")
+        
+        scheduler.step()  # 学習スケジューラーを更新
+
+        # early_stopping(train_loss)
+        # if early_stopping.early_stop:
+        #     print("Early stopping")
+        #     break
 
     # 提出用ファイルの作成
     model.eval()
     submission = []
-    for image, question in test_loader:
-        image, question = image.to(device), question.to(device)
-        pred = model(image, question)
-        pred = pred.argmax(1).cpu().item()
-        submission.append(pred)
+    for images, questions in test_loader:
+        images, questions = images.to(device), questions.to(device)
+        preds = model(images, questions)
+
+        # 各バッチ内でargmaxを計算し、結果をリストに追加する
+        preds = preds.argmax(1)  # shape: (batch_size,)
+        for pred in preds:
+            submission.append(pred.item())  # スカラー値として追加
 
     submission = [train_dataset.idx2answer[id] for id in submission]
     submission = np.array(submission)
