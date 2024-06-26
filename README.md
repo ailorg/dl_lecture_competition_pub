@@ -1,6 +1,10 @@
 # DL基礎講座2024　最終課題「Optical Flow Prediction from Event Camera (EventCamera)」
 
-
+## 変更
+- `config/base.yml`について, バッチサイズが16以上だと演習環境でメモリエラーが発生するのでバッチサイズを8に変更しました.
+- `main.py`にて2箇所誤りがありましたので修正しました.
+    - 159行目: batch["event_volume_old"] => batch["event_volume"]
+    - 166行目: submission.npy => submission
 
 ## 環境構築
 ### requirements
