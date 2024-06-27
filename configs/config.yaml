@@ -1,5 +1,5 @@
-batch_size: 128
-epochs: 80
+batch_size: 32 #128
+epochs: 20 #80
 lr: 0.001
 
 device: cuda:0
@@ -8,6 +8,7 @@ seed: 1234
 use_wandb: False
 
 data_dir: data
+image_base_dir: images
 
 # Evaluation
 model_path: 
