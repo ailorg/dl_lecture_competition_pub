@@ -1,4 +1,5 @@
 import torch
+from torch import nn
 import hydra
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Dict, Any
 import os
 import time
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
 
 class RepresentationType(Enum):
@@ -26,6 +28,21 @@ def set_seed(seed):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
+
+def compute_multiscale_epe_error(pred_flows, gt_flow):
+    total_loss = 0
+    weights = [0.32, 0.08, 0.02, 0.01]  # 各スケールの重み
+    for i, (pred_flow, weight) in enumerate(zip(pred_flows, weights)):
+        # 予測フローのサイズに合わせて地表真値フローをリサイズ
+        if pred_flow.shape != gt_flow.shape:
+            gt_flow_scaled = nn.functional.interpolate(gt_flow, size=pred_flow.shape[2:], mode='bilinear', align_corners=False)
+        else:
+            gt_flow_scaled = gt_flow
+        
+        epe = torch.mean(torch.norm(pred_flow - gt_flow_scaled, p=2, dim=1))
+        total_loss += weight * epe
+    return total_loss
+
 
 def compute_epe_error(pred_flow: torch.Tensor, gt_flow: torch.Tensor):
     '''
@@ -110,12 +127,14 @@ def main(args: DictConfig):
     # ------------------
     #       Model
     # ------------------
-    model = EVFlowNet(args.train).to(device)
+    # main関数内でモデルのインスタンス化を修正
+    model = EVFlowNet(args.train, no_batch_norm=False).to(device)
 
     # ------------------
     #   optimizer
     # ------------------
     optimizer = torch.optim.Adam(model.parameters(), lr=args.train.initial_learning_rate, weight_decay=args.train.weight_decay)
+    scheduler = CosineAnnealingWarmRestarts(optimizer, T_0=10, T_mult=2)
     # ------------------
     #   Start training
     # ------------------
@@ -127,14 +146,20 @@ def main(args: DictConfig):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
-            flow = model(event_image) # [B, 2, 480, 640]
-            loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
+            
+            # モデルの出力を取得
+            model_output = model({"event_volume": event_image})
+            flows = model_output["flow_predictions"]
+
+            loss: torch.Tensor = compute_multiscale_epe_error(flows, ground_truth_flow) #追加
             print(f"batch {i} loss: {loss.item()}")
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
+
+        scheduler.step()
         print(f'Epoch {epoch+1}, Loss: {total_loss / len(train_data)}')
 
     # Create the directory if it doesn't exist
@@ -152,14 +177,22 @@ def main(args: DictConfig):
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     flow: torch.Tensor = torch.tensor([]).to(device)
+    final_flows = []
     with torch.no_grad():
         print("start test")
         for batch in tqdm(test_data):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device)
-            batch_flow = model(event_image) # [1, 2, 480, 640]
-            flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
+            model_output = model({"event_volume": event_image})
+            flows = model_output["flow_predictions"]
+            # 最終的な（最大解像度の）フローを使用
+            final_flow = flows[-1]
+            final_flows.append(final_flow)
         print("test done")
+
+    # すべてのバッチの最終フローを結合
+    flow: torch.Tensor = torch.cat(final_flows, dim=0)  # [N, 2, 480, 640
+
     # ------------------
     #  save submission
     # ------------------
