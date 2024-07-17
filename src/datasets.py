@@ -4,7 +4,6 @@ import torch
 from typing import Tuple
 from termcolor import cprint
 
-
 class ThingsMEGDataset(torch.utils.data.Dataset):
     def __init__(self, split: str, data_dir: str = "data") -> None:
         super().__init__()
@@ -19,6 +18,9 @@ class ThingsMEGDataset(torch.utils.data.Dataset):
         if split in ["train", "val"]:
             self.y = torch.load(os.path.join(data_dir, f"{split}_y.pt"))
             assert len(torch.unique(self.y)) == self.num_classes, "Number of classes do not match."
+        
+        # 標準化を追加
+        self.X = (self.X - self.X.mean(dim=0)) / self.X.std(dim=0)
 
     def __len__(self) -> int:
         return len(self.X)
