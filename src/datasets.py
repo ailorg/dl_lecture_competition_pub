@@ -264,6 +264,10 @@ class Sequence(Dataset):
         self.h5rect = h5py.File(str(ev_rect_file), 'r')
         self.rectify_ev_map = self.h5rect['rectify_map'][()]
 
+        # 修正
+        self.delta_t_us = delta_t_ms * 1000
+        self.delta_t_us2 = 2 * delta_t_ms * 1000
+
 
     def events_to_voxel_grid(self, p, t, x, y, device: str = 'cpu'):
         t = (t - t[0]).astype('float32')
@@ -315,6 +319,58 @@ class Sequence(Dataset):
         assert x.max() < self.width
         assert y.max() < self.height
         return rectify_map[y, x]
+
+
+# 修正
+    # def get_data(self, index) -> Dict[str, any]:
+    #     # 2つのフレームの開始時刻と終了時刻を設定
+    #     ts_start1 = self.timestamps_flow[index] - self.delta_t_us
+    #     ts_end1 = self.timestamps_flow[index]
+    #     ts_start2 = ts_end1
+    #     ts_end2 = ts_start2 + self.delta_t_us
+
+    #     file_index = self.indices[index]
+
+    #     output = {
+    #         'file_index': file_index,
+    #         'timestamp': self.timestamps_flow[index],
+    #         'seq_name': self.seq_name
+    #     }
+
+    #     # 1つ目のフレームのイベントデータを取得
+    #     event_data1 = self.event_slicer.get_events(ts_start1, ts_end1)
+    #     p1 = event_data1['p']
+    #     t1 = event_data1['t']
+    #     x1 = event_data1['x']
+    #     y1 = event_data1['y']
+
+    #     # 2つ目のフレームのイベントデータを取得
+    #     event_data2 = self.event_slicer.get_events(ts_start2, ts_end2)
+    #     p2 = event_data2['p']
+    #     t2 = event_data2['t']
+    #     x2 = event_data2['x']
+    #     y2 = event_data2['y']
+
+    #     # イベントデータをボクセルグリッドに変換
+    #     xy_rect1 = self.rectify_events(x1, y1)
+    #     x_rect1 = xy_rect1[:, 0]
+    #     y_rect1 = xy_rect1[:, 1]
+    #     event_representation1 = self.events_to_voxel_grid(p1, t1, x_rect1, y_rect1)
+
+    #     xy_rect2 = self.rectify_events(x2, y2)
+    #     x_rect2 = xy_rect2[:, 0]
+    #     y_rect2 = xy_rect2[:, 1]
+    #     event_representation2 = self.events_to_voxel_grid(p2, t2, x_rect2, y_rect2)
+
+    #     # 2つのフレームのイベントデータを結合して入力にする
+    #     output['event_volume'] = torch.cat((event_representation1, event_representation2), dim=0)
+    #     output['name_map'] = self.name_idx
+
+    #     if self.load_gt:
+    #         output['flow_gt'] = [torch.tensor(x) for x in self.load_flow(self.flow_png[index])]
+    #         output['flow_gt'][0] = torch.moveaxis(output['flow_gt'][0], -1, 0)
+    #         output['flow_gt'][1] = torch.unsqueeze(output['flow_gt'][1], 0)
+    #     return output
     
     def get_data(self, index) -> Dict[str, any]:
         ts_start: int = self.timestamps_flow[index] - self.delta_t_us
