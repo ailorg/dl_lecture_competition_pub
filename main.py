@@ -120,7 +120,7 @@ def main(args: DictConfig):
     #   Start training
     # ------------------
     model.train()
-    for epoch in range(args.train.epochs):
+    for epoch in range(10):
         total_loss = 0
         print("on epoch: {}".format(epoch+1))
         for i, batch in enumerate(tqdm(train_data)):
