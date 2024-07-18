@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from src.models.base import *
 from typing import Dict, Any
+import torch.nn.functional as F
 
 _BASE_CHANNELS = 64
 
@@ -29,7 +30,7 @@ class EVFlowNet(nn.Module):
         self.decoder4 = upsample_conv2d_and_predict_flow(in_channels=2*_BASE_CHANNELS+2,
                         out_channels=int(_BASE_CHANNELS/2), do_batch_norm=not self._args.no_batch_norm)
 
-    def forward(self, inputs: Dict[str, Any]) -> Dict[str, Any]:
+    def forward(self, inputs: torch.Tensor) -> Dict[str, torch.Tensor]:
         # encoder
         skip_connections = {}
         inputs = self.encoder1(inputs)
@@ -62,7 +63,13 @@ class EVFlowNet(nn.Module):
         inputs, flow = self.decoder4(inputs)
         flow_dict['flow3'] = flow.clone()
 
-        return flow
+        max_size = [max(flow.size(2) for flow in flow_dict.values()), max(flow.size(3) for flow in flow_dict.values())]
+        resized_flows = [F.interpolate(flow, size=max_size, mode='bilinear', align_corners=False) for flow in flow_dict.values()]
+        total_flow = sum(resized_flows)
+        avg_flow = total_flow / len(flow_dict)
+        flow_dict['avg_flow'] = avg_flow
+
+        return flow_dict
         
 
 # if __name__ == "__main__":

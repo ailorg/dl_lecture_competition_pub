@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Dict, Any
 import os
 import time
+import torch.nn as nn
+import torch.nn.functional as F
 
 
 class RepresentationType(Enum):
@@ -27,6 +29,8 @@ def set_seed(seed):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
 
+# 変更前
+"""
 def compute_epe_error(pred_flow: torch.Tensor, gt_flow: torch.Tensor):
     '''
     end-point-error (ground truthと予測値の二乗誤差)を計算
@@ -34,6 +38,20 @@ def compute_epe_error(pred_flow: torch.Tensor, gt_flow: torch.Tensor):
     gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
     '''
     epe = torch.mean(torch.mean(torch.norm(pred_flow - gt_flow, p=2, dim=1), dim=(1, 2)), dim=0)
+    return epe
+"""
+# 変更後
+def compute_epe_error(pred_flow_dict: Dict[str, torch.Tensor], gt_flow: torch.Tensor):
+    '''
+    end-point-error (ground truthと予測値の二乗誤差)を計算
+    pred_flow_dict: Dict[str, torch.Tensor] => 予測したオプティカルフローデータの辞書
+    gt_flow: torch.Tensor, Shape: torch.Size([B, 2, 480, 640]) => 正解のオプティカルフローデータ
+    '''
+    # 平均フローを使用してEPEを計算
+    avg_flow = pred_flow_dict['avg_flow']
+    gt_flow_resized = nn.functional.interpolate(gt_flow, size=avg_flow.shape[-2:], mode='bilinear', align_corners=False)
+    epe = torch.mean(torch.norm(avg_flow - gt_flow_resized, p=2, dim=1))
+
     return epe
 
 def save_optical_flow_to_npy(flow: torch.Tensor, file_name: str):
@@ -126,6 +144,7 @@ def main(args: DictConfig):
         for i, batch in enumerate(tqdm(train_data)):
             batch: Dict[str, Any]
             event_image = batch["event_volume"].to(device) # [B, 4, 480, 640]
+            print(batch["event_volume"].shape) 
             ground_truth_flow = batch["flow_gt"].to(device) # [B, 2, 480, 640]
             flow = model(event_image) # [B, 2, 480, 640]
             loss: torch.Tensor = compute_epe_error(flow, ground_truth_flow)
@@ -152,6 +171,8 @@ def main(args: DictConfig):
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.eval()
     flow: torch.Tensor = torch.tensor([]).to(device)
+    # 変更前
+    """
     with torch.no_grad():
         print("start test")
         for batch in tqdm(test_data):
@@ -159,6 +180,16 @@ def main(args: DictConfig):
             event_image = batch["event_volume"].to(device)
             batch_flow = model(event_image) # [1, 2, 480, 640]
             flow = torch.cat((flow, batch_flow), dim=0)  # [N, 2, 480, 640]
+        print("test done")"""
+    # 変更後
+    with torch.no_grad():
+        print("start test")
+        for batch in tqdm(test_data):
+            event_image = batch["event_volume"].to(device)  # [B, 2, 4, 480, 640] - > LSTM - > [B, 4, 480, 640]
+            batch_flow_dict = model(event_image)  # モデルの出力が辞書
+            batch_flow = batch_flow_dict['avg_flow']  # 平均フローデータを辞書から取得
+            flow = torch.cat((flow, batch_flow), dim=0)  # 必要に応じて形状を調整
+
         print("test done")
     # ------------------
     #  save submission
