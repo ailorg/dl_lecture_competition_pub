@@ -1,0 +1,13 @@
+batch_size: 512
+epochs: 30
+lr: 0.001
+
+device: cuda:0
+num_workers: 4
+seed: 1234
+use_wandb: False
+
+data_dir: data
+
+# Evaluation
+model_path: 
